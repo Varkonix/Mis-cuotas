@@ -5,7 +5,7 @@ import { VitePWA } from 'vite-plugin-pwa'
 // IMPORTANTE: "base" debe coincidir con el nombre de tu repo en GitHub,
 // porque GitHub Pages sirve el sitio en https://<usuario>.github.io/<repo>/
 export default defineConfig({
-  base: '/Mis-cuotas-app/',
+  base: '/Mis-cuotas/',
   plugins: [
     react(),
     VitePWA({
@@ -18,8 +18,8 @@ export default defineConfig({
         theme_color: '#065f46',
         background_color: '#f5f5f4',
         display: 'standalone',
-        start_url: '/Mis-cuotas-app/',
-        scope: '/Mis-cuotas-app/',
+        start_url: '/Mis-cuotas/',
+        scope: '/Mis-cuotas/',
         icons: [
           {
             src: 'icon.svg',
