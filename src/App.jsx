@@ -98,33 +98,64 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [confirmingReset, setConfirmingReset] = useState(false);
 
-  // Carga inicial desde localStorage del navegador
+  // Carga inicial desde window.storage o localStorage
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        setItems(Array.isArray(parsed.items) ? parsed.items : []);
-        setPagos(parsed.pagos && typeof parsed.pagos === 'object' ? parsed.pagos : {});
-        setOcultos(parsed.ocultos && typeof parsed.ocultos === 'object' ? parsed.ocultos : {});
+    let cancelled = false;
+    async function load() {
+      try {
+        if (typeof window !== 'undefined' && window.storage) {
+          const res = await window.storage.get(STORAGE_KEY, false);
+          if (!cancelled && res && res.value) {
+            const parsed = JSON.parse(res.value);
+            setItems(Array.isArray(parsed.items) ? parsed.items : []);
+            setPagos(parsed.pagos && typeof parsed.pagos === 'object' ? parsed.pagos : {});
+            setOcultos(parsed.ocultos && typeof parsed.ocultos === 'object' ? parsed.ocultos : {});
+            return;
+          }
+        }
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          setItems(Array.isArray(parsed.items) ? parsed.items : []);
+          setPagos(parsed.pagos && typeof parsed.pagos === 'object' ? parsed.pagos : {});
+          setOcultos(parsed.ocultos && typeof parsed.ocultos === 'object' ? parsed.ocultos : {});
+        }
+      } catch (e) {
+        // No hay datos guardados todavía, o error al parsear.
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+          setHasLoaded(true);
+        }
       }
-    } catch (e) {
-      // No hay datos guardados todavía, o el JSON es inválido: se parte con listas vacías.
-    } finally {
-      setLoading(false);
-      setHasLoaded(true);
     }
+    load();
+    return () => { cancelled = true; };
   }, []);
 
-  // Guarda cada vez que cambian los datos (una vez que ya cargamos el estado inicial)
+  // Guarda cada vez que cambian los datos (una vez cargado el estado inicial)
   useEffect(() => {
     if (!hasLoaded) return;
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ items, pagos, ocultos }));
-      setSaveError(false);
-    } catch (e) {
-      setSaveError(true);
+    async function save() {
+      const dataStr = JSON.stringify({ items, pagos, ocultos });
+      let saved = false;
+      try {
+        if (typeof window !== 'undefined' && window.storage) {
+          await window.storage.set(STORAGE_KEY, dataStr, false);
+          saved = true;
+        }
+      } catch (e) {
+        // Ignore window.storage failure and fallback to localStorage
+      }
+      try {
+        localStorage.setItem(STORAGE_KEY, dataStr);
+        saved = true;
+      } catch (e) {
+        if (!saved) setSaveError(true);
+      }
+      if (saved) setSaveError(false);
     }
+    save();
   }, [items, pagos, ocultos, hasLoaded]);
 
   const monthItems = useMemo(() => {
