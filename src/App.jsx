@@ -322,7 +322,7 @@ export default function App() {
       <div className="w-full max-w-md bg-stone-50 min-h-screen relative pb-28">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-5 pt-6 pb-2">
+        <div className="flex items-center justify-between px-5 pt-[calc(env(safe-area-inset-top)+1.5rem)] pb-2">
           <h1 className="text-xl font-semibold text-stone-900">Mis Cuotas</h1>
           <button
             onClick={() => setShowSettings(true)}
