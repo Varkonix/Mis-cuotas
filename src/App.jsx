@@ -309,6 +309,19 @@ export default function App() {
     setShowSettings(false);
   }
 
+  async function forceUpdateApp() {
+    if ('caches' in window) {
+      try {
+        const cacheNames = await caches.keys();
+        await Promise.all(cacheNames.map(name => caches.delete(name)));
+      } catch (err) {
+        console.error('Error clearing caches', err);
+      }
+    }
+    // Forzar recarga desde el servidor
+    window.location.reload(true);
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-stone-100 flex items-center justify-center">
@@ -623,12 +636,21 @@ export default function App() {
               </p>
 
               {!confirmingReset ? (
-                <button
-                  onClick={() => setConfirmingReset(true)}
-                  className="w-full py-3 rounded-2xl bg-red-50 text-red-600 font-medium"
-                >
-                  Borrar todos los datos
-                </button>
+                <div className="space-y-3">
+                  <button
+                    onClick={forceUpdateApp}
+                    className="w-full py-3 rounded-2xl bg-emerald-50 text-emerald-700 font-medium flex justify-center items-center gap-2"
+                  >
+                    <Repeat size={18} />
+                    Buscar actualizaciones
+                  </button>
+                  <button
+                    onClick={() => setConfirmingReset(true)}
+                    className="w-full py-3 rounded-2xl bg-red-50 text-red-600 font-medium"
+                  >
+                    Borrar todos los datos
+                  </button>
+                </div>
               ) : (
                 <div className="space-y-3">
                   <p className="text-sm text-stone-700">
