@@ -7,6 +7,19 @@ import { VitePWA } from 'vite-plugin-pwa'
 export default defineConfig({
   base: '/Mis-cuotas/',
   plugins: [
+    {
+      name: 'redirect-root-to-base',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          if (req.url === '/' || req.url === '') {
+            res.writeHead(302, { Location: '/Mis-cuotas/' });
+            res.end();
+            return;
+          }
+          next();
+        });
+      }
+    },
     react(),
     VitePWA({
       registerType: 'autoUpdate',

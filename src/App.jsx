@@ -46,6 +46,34 @@ function pagoKey(anio, mes, id) {
   return `${anio}_${mes}_${id}`;
 }
 
+// Calcula el mes y año efectivo del primer cobro según la selección de período
+function getEffectiveInicio(mesBase, anioBase, primerPago) {
+  const m = parseInt(mesBase, 10);
+  const a = parseInt(anioBase, 10);
+  if (Number.isNaN(m) || Number.isNaN(a)) return { mes: m, anio: a };
+  if (primerPago === 'siguiente') {
+    const nextMes = (m % 12) + 1;
+    const nextAnio = m === 12 ? a + 1 : a;
+    return { mes: nextMes, anio: nextAnio };
+  }
+  return { mes: m, anio: a };
+}
+
+// Calcula el mes y año de término de una deuda
+function getFechaFin(mesInicio, anioInicio, cuotasTotales) {
+  if (cuotasTotales === null || cuotasTotales === undefined) return null;
+  const N = parseInt(cuotasTotales, 10);
+  if (Number.isNaN(N) || N < 0) return null;
+  const m = parseInt(mesInicio, 10);
+  const a = parseInt(anioInicio, 10);
+  if (Number.isNaN(m) || Number.isNaN(a)) return null;
+
+  const totalMeses = (m - 1) + N;
+  const endAnio = a + Math.floor(totalMeses / 12);
+  const endMes = (totalMeses % 12) + 1;
+  return { mes: endMes, anio: endAnio, label: `${MESES[endMes - 1]} ${endAnio}` };
+}
+
 function Field({ label, hint, children }) {
   return (
     <label className="block">
@@ -74,7 +102,17 @@ const inputClass =
   'w-full px-3.5 py-2.5 rounded-xl border border-stone-200 text-stone-900 text-sm ' +
   'focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-700 bg-white';
 
-const EMPTY_FORM = { nombre: '', cuotas: '', precio: '', mes: '', anio: '', esFijo: false, esUltimoPago: false };
+const EMPTY_FORM = {
+  nombre: '',
+  cuotas: '',
+  precio: '',
+  diaPago: '',
+  primerPago: 'actual',
+  mes: '',
+  anio: '',
+  esFijo: false,
+  esUltimoPago: false
+};
 
 export default function App() {
   const now = new Date();
@@ -172,6 +210,8 @@ export default function App() {
   const totalMes = monthItems.reduce((s, it) => s + it.monto, 0);
   const totalPagado = monthItems.reduce((s, it) => s + (isPaid(it) ? it.monto : 0), 0);
   const totalPendiente = totalMes - totalPagado;
+  // Total a pagar dinámico: descuenta en tiempo real los pagos realizados y pasa a 0 cuando todo el mes está pagado
+  const totalAPagar = totalPendiente;
   const allPaid = monthItems.length > 0 && monthItems.every(it => isPaid(it));
   const isCurrentMonth = viewMes === now.getMonth() + 1 && viewAnio === now.getFullYear();
 
@@ -206,7 +246,17 @@ export default function App() {
 
   function openAdd() {
     setEditingItem(null);
-    setForm({ nombre: '', cuotas: '', precio: '', mes: String(viewMes), anio: String(viewAnio), esFijo: false, esUltimoPago: false });
+    setForm({
+      nombre: '',
+      cuotas: '',
+      precio: '',
+      diaPago: '',
+      primerPago: 'actual',
+      mes: String(viewMes),
+      anio: String(viewAnio),
+      esFijo: false,
+      esUltimoPago: false
+    });
     setFormError('');
     setShowForm(true);
   }
@@ -219,8 +269,10 @@ export default function App() {
       nombre: item.nombre,
       cuotas: (esFijo || esUltimoPago) ? '' : String(item.cuotasTotales),
       precio: String(item.precioCuota),
-      mes: String(item.mesInicio),
-      anio: String(item.anioInicio),
+      diaPago: item.diaPago !== undefined && item.diaPago !== null ? String(item.diaPago) : '',
+      primerPago: item.primerPago || 'actual',
+      mes: String(item.mesBase || item.mesInicio),
+      anio: String(item.anioBase || item.anioInicio),
       esFijo,
       esUltimoPago
     });
@@ -235,6 +287,22 @@ export default function App() {
     setFormError('');
   }
 
+  // Cálculo en tiempo real del primer cobro y fecha fin en el formulario
+  const formEffectiveInicio = useMemo(() => {
+    return getEffectiveInicio(form.mes, form.anio, form.primerPago);
+  }, [form.mes, form.anio, form.primerPago]);
+
+  const formFechaFin = useMemo(() => {
+    if (form.esFijo) return null;
+    if (form.esUltimoPago) {
+      return getFechaFin(formEffectiveInicio.mes, formEffectiveInicio.anio, 0);
+    }
+    if (!form.cuotas) return null;
+    const n = parseInt(form.cuotas, 10);
+    if (Number.isNaN(n) || n < 1) return null;
+    return getFechaFin(formEffectiveInicio.mes, formEffectiveInicio.anio, n);
+  }, [form.esFijo, form.esUltimoPago, form.cuotas, formEffectiveInicio]);
+
   function handleSave() {
     const nombre = form.nombre.trim();
     const precio = parseInt(form.precio, 10);
@@ -243,8 +311,17 @@ export default function App() {
 
     if (!nombre) { setFormError('Ingresa un nombre para el gasto.'); return; }
     if (!precio || precio <= 0 || Number.isNaN(precio)) { setFormError('Ingresa un valor de cuota mensual válido.'); return; }
-    if (Number.isNaN(anio) || anio < 2000 || anio > 2100) { setFormError('Ingresa un año de inicio válido.'); return; }
-    if (Number.isNaN(mes) || mes < 1 || mes > 12) { setFormError('Selecciona un mes de inicio.'); return; }
+    if (Number.isNaN(anio) || anio < 2000 || anio > 2100) { setFormError('Ingresa un año válido.'); return; }
+    if (Number.isNaN(mes) || mes < 1 || mes > 12) { setFormError('Selecciona un mes.'); return; }
+
+    let diaPagoNum = null;
+    if (form.diaPago && String(form.diaPago).trim() !== '') {
+      diaPagoNum = parseInt(form.diaPago, 10);
+      if (Number.isNaN(diaPagoNum) || diaPagoNum < 1 || diaPagoNum > 31) {
+        setFormError('Ingresa un día de pago válido (entre 1 y 31).');
+        return;
+      }
+    }
 
     let cuotasTotales;
     if (form.esFijo) {
@@ -260,15 +337,30 @@ export default function App() {
       cuotasTotales = cuotasNum;
     }
 
+    const effective = getEffectiveInicio(mes, anio, form.primerPago);
+
+    const payload = {
+      nombre,
+      precioCuota: precio,
+      cuotasTotales,
+      mesInicio: effective.mes,
+      anioInicio: effective.anio,
+      mesBase: mes,
+      anioBase: anio,
+      primerPago: form.primerPago || 'actual',
+      diaPago: diaPagoNum
+    };
+
     if (editingItem) {
       setItems(prev => prev.map(it =>
         it.id === editingItem.id
-          ? { ...it, nombre, precioCuota: precio, cuotasTotales, mesInicio: mes, anioInicio: anio }
+          ? { ...it, ...payload }
           : it
       ));
     } else {
       setItems(prev => [...prev, {
-        id: genId(), nombre, precioCuota: precio, cuotasTotales, mesInicio: mes, anioInicio: anio
+        id: genId(),
+        ...payload
       }]);
     }
     closeForm();
@@ -378,11 +470,18 @@ export default function App() {
 
             <div className="mt-4">
               <div className="flex items-center justify-between">
-                <p className="text-sm text-emerald-200">Total a pagar</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm text-emerald-200">Total a pagar</p>
+                  {allPaid && monthItems.length > 0 && (
+                    <span className="text-[11px] bg-emerald-800 text-emerald-200 px-2 py-0.5 rounded-full font-medium">
+                      Al día
+                    </span>
+                  )}
+                </div>
                 <Receipt size={16} className="text-emerald-300" />
               </div>
               <p className="text-4xl font-semibold tracking-tight tabular-nums mt-0.5">
-                {formatCLP(totalMes)}
+                {formatCLP(totalAPagar)}
               </p>
             </div>
 
@@ -396,8 +495,8 @@ export default function App() {
                 <p className="font-medium tabular-nums">{formatCLP(totalPagado)}</p>
               </div>
               <div className="text-right">
-                <p className="text-emerald-300">Pendiente</p>
-                <p className="font-medium tabular-nums">{formatCLP(totalPendiente)}</p>
+                <p className="text-emerald-300">Total del mes</p>
+                <p className="font-medium tabular-nums">{formatCLP(totalMes)}</p>
               </div>
             </div>
           </div>
@@ -425,34 +524,43 @@ export default function App() {
                 Toca el botón + para agregar el primero.
               </div>
             ) : (
-              monthItems.map((it, idx) => (
-                <div
-                  key={it.id}
-                  className={`flex items-center gap-3 px-4 py-3.5 ${idx !== monthItems.length - 1 ? 'border-b border-stone-100' : ''}`}
-                >
-                  <button onClick={() => togglePago(it)} className="shrink-0" aria-label="Marcar pagado">
-                    {isPaid(it)
-                      ? <CheckCircle2 className="text-emerald-700" size={24} />
-                      : <Circle className="text-stone-300" size={24} />}
-                  </button>
-                  <button className="flex-1 min-w-0 text-left" onClick={() => openEdit(it)}>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`font-medium truncate ${isPaid(it) ? 'line-through text-stone-400' : 'text-stone-900'}`}>
-                        {it.nombre}
-                      </span>
-                      <Badge tipo={it.tipo} label={it.label} />
-                    </div>
-                    <span className="text-sm text-stone-500 tabular-nums">{formatCLP(it.monto)}</span>
-                  </button>
-                  <button
-                    onClick={() => confirmDelete(it.id)}
-                    className="shrink-0 p-2 text-stone-300 hover:text-red-500"
-                    aria-label="Eliminar"
+              monthItems.map((it, idx) => {
+                const fin = it.cuotasTotales !== null && it.tipo === 'cuota'
+                  ? getFechaFin(it.mesInicio, it.anioInicio, it.cuotasTotales)
+                  : null;
+                return (
+                  <div
+                    key={it.id}
+                    className={`flex items-center gap-3 px-4 py-3.5 ${idx !== monthItems.length - 1 ? 'border-b border-stone-100' : ''}`}
                   >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              ))
+                    <button onClick={() => togglePago(it)} className="shrink-0" aria-label="Marcar pagado">
+                      {isPaid(it)
+                        ? <CheckCircle2 className="text-emerald-700" size={24} />
+                        : <Circle className="text-stone-300" size={24} />}
+                    </button>
+                    <button className="flex-1 min-w-0 text-left" onClick={() => openEdit(it)}>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`font-medium truncate ${isPaid(it) ? 'line-through text-stone-400' : 'text-stone-900'}`}>
+                          {it.nombre}
+                        </span>
+                        <Badge tipo={it.tipo} label={it.label} />
+                      </div>
+                      <div className="flex items-center gap-1.5 text-sm text-stone-500 tabular-nums flex-wrap mt-0.5">
+                        <span>{formatCLP(it.monto)}</span>
+                        {it.diaPago && <span>• Día {it.diaPago}</span>}
+                        {fin && <span className="text-xs text-stone-400">• Fin: {fin.label}</span>}
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => confirmDelete(it.id)}
+                      className="shrink-0 p-2 text-stone-300 hover:text-red-500"
+                      aria-label="Eliminar"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                );
+              })
             )}
           </div>
 
@@ -519,34 +627,72 @@ export default function App() {
                 </div>
 
                 {!form.esFijo && !form.esUltimoPago && (
-                  <Field
-                    label="Cantidad de cuotas con la que parte"
-                    hint="Ej: si ingresas 3, este mes se verá como F3, el siguiente F2, luego F1, luego Último pago y después desaparece."
-                  >
+                  <div>
+                    <Field
+                      label="Cantidad de cuotas con la que parte"
+                      hint="Ej: si ingresas 3, este mes se verá como F3, el siguiente F2, luego F1, luego Último pago y después desaparece."
+                    >
+                      <input
+                        className={inputClass}
+                        type="number"
+                        min="1"
+                        value={form.cuotas}
+                        onChange={e => setForm(f => ({ ...f, cuotas: e.target.value }))}
+                        placeholder="Ej: 3"
+                      />
+                    </Field>
+                    {formFechaFin && (
+                      <div className="mt-2.5 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200/70 flex items-center gap-2 text-emerald-900">
+                        <CheckCircle2 size={16} className="text-emerald-700 shrink-0" />
+                        <div className="text-xs">
+                          <span className="font-semibold">Término de pago:</span>{' '}
+                          <span>{formFechaFin.label}</span>
+                          {form.diaPago ? ` (día ${form.diaPago})` : ''}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {form.esFijo && (
+                  <div className="p-2.5 rounded-xl bg-stone-100 border border-stone-200/70 text-xs text-stone-600">
+                    Gasto fijo mensual (sin fecha de término)
+                  </div>
+                )}
+
+                {form.esUltimoPago && formFechaFin && (
+                  <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200/70 text-xs font-medium text-amber-800 flex items-center gap-2">
+                    <CheckCircle2 size={16} className="text-amber-700 shrink-0" />
+                    <span>Término de pago: {formFechaFin.label} (Último pago este mes)</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Valor cuota mensual">
                     <input
                       className={inputClass}
                       type="number"
                       min="1"
-                      value={form.cuotas}
-                      onChange={e => setForm(f => ({ ...f, cuotas: e.target.value }))}
-                      placeholder="Ej: 3"
+                      value={form.precio}
+                      onChange={e => setForm(f => ({ ...f, precio: e.target.value }))}
+                      placeholder="Ej: 24990"
                     />
                   </Field>
-                )}
-
-                <Field label="Valor de la cuota mensual">
-                  <input
-                    className={inputClass}
-                    type="number"
-                    min="1"
-                    value={form.precio}
-                    onChange={e => setForm(f => ({ ...f, precio: e.target.value }))}
-                    placeholder="Ej: 24990"
-                  />
-                </Field>
+                  <Field label="Día de pago" hint="Día 1 al 31">
+                    <input
+                      className={inputClass}
+                      type="number"
+                      min="1"
+                      max="31"
+                      value={form.diaPago}
+                      onChange={e => setForm(f => ({ ...f, diaPago: e.target.value }))}
+                      placeholder="Ej: 5"
+                    />
+                  </Field>
+                </div>
 
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="Mes de inicio">
+                  <Field label="Mes de registro">
                     <select
                       className={inputClass}
                       value={form.mes}
@@ -558,7 +704,7 @@ export default function App() {
                       ))}
                     </select>
                   </Field>
-                  <Field label="Año de inicio">
+                  <Field label="Año">
                     <input
                       className={inputClass}
                       type="number"
@@ -568,6 +714,55 @@ export default function App() {
                     />
                   </Field>
                 </div>
+
+                <Field label="¿Cuándo se realiza el primer pago?">
+                  <div className="grid grid-cols-2 gap-2 mt-1">
+                    <button
+                      type="button"
+                      onClick={() => setForm(f => ({ ...f, primerPago: 'actual' }))}
+                      className={`px-3 py-2.5 rounded-xl text-xs font-medium border text-left transition-colors ${
+                        form.primerPago === 'actual'
+                          ? 'bg-emerald-900 text-white border-emerald-900 shadow-sm'
+                          : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-50'
+                      }`}
+                    >
+                      <div className="font-semibold">Mes actual</div>
+                      <div className={`text-[11px] mt-0.5 ${form.primerPago === 'actual' ? 'text-emerald-200' : 'text-stone-400'}`}>
+                        {form.mes && form.anio ? `${MESES[parseInt(form.mes, 10) - 1]} ${form.anio}` : 'Este mes'}
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setForm(f => ({ ...f, primerPago: 'siguiente' }))}
+                      className={`px-3 py-2.5 rounded-xl text-xs font-medium border text-left transition-colors ${
+                        form.primerPago === 'siguiente'
+                          ? 'bg-emerald-900 text-white border-emerald-900 shadow-sm'
+                          : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-50'
+                      }`}
+                    >
+                      <div className="font-semibold">Mes siguiente</div>
+                      <div className={`text-[11px] mt-0.5 ${form.primerPago === 'siguiente' ? 'text-emerald-200' : 'text-stone-400'}`}>
+                        {form.mes && form.anio
+                          ? (() => {
+                              const { mes: nm, anio: na } = getEffectiveInicio(form.mes, form.anio, 'siguiente');
+                              return `${MESES[nm - 1]} ${na}`;
+                            })()
+                          : 'Próximo mes'}
+                      </div>
+                    </button>
+                  </div>
+                  {form.diaPago && form.mes && form.anio && (
+                    <p className="text-xs text-stone-500 mt-2">
+                      Primer cobro:{' '}
+                      <span className="font-medium text-stone-800">
+                        {form.diaPago} de {(() => {
+                          const { mes: em, anio: ea } = getEffectiveInicio(form.mes, form.anio, form.primerPago);
+                          return `${MESES[em - 1]} ${ea}`;
+                        })()}
+                      </span>
+                    </p>
+                  )}
+                </Field>
               </div>
 
               {formError && <p className="text-sm text-red-500 mt-3">{formError}</p>}
